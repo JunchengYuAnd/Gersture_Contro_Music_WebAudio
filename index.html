@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hand Filter</title>
+    <title>Hand Filter - Multi Track</title>
     <style>
         body {
             margin: 0;
@@ -40,28 +40,125 @@
             font-size: 16px;
             margin-right: 10px;
             cursor: pointer;
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         #info {
             margin-top: 20px;
             font-size: 24px;
         }
+
+        .track-uploads {
+            margin: 20px 0;
+            padding: 20px;
+            background: #252525;
+            border-radius: 8px;
+        }
+
+        .track-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 15px;
+        }
+
+        .track-row label {
+            width: 80px;
+            font-weight: bold;
+        }
+
+        .track-row input[type="file"] {
+            flex: 1;
+        }
+
+        .track-status {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #555;
+        }
+
+        .track-status.loaded {
+            background: #4CAF50;
+        }
+
+        .controls-info {
+            margin: 20px 0;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .controls-info h3 {
+            margin-top: 0;
+        }
     </style>
 </head>
 <body>
-    <h1>Hand Filter Control</h1>
-    
+    <h1>Hand Filter - Multi Track Control</h1>
+
+    <div class="track-uploads">
+        <h3>Upload Audio Tracks (loop files, same BPM & length)</h3>
+        <div class="track-row">
+            <label>🥁 Drums:</label>
+            <input type="file" id="drumFile" accept="audio/*">
+            <div class="track-status" id="drumStatus"></div>
+        </div>
+        <div class="track-row">
+            <label>🎸 Bass:</label>
+            <input type="file" id="bassFile" accept="audio/*">
+            <div class="track-status" id="bassStatus"></div>
+        </div>
+        <div class="track-row">
+            <label>🎹 Melody:</label>
+            <input type="file" id="melodyFile" accept="audio/*">
+            <div class="track-status" id="melodyStatus"></div>
+        </div>
+        <div class="track-row">
+            <label>🎼 Pad:</label>
+            <input type="file" id="padFile" accept="audio/*">
+            <div class="track-status" id="padStatus"></div>
+        </div>
+        <div class="track-row">
+            <label>🔔 Perc:</label>
+            <input type="file" id="percFile" accept="audio/*">
+            <div class="track-status" id="percStatus"></div>
+        </div>
+    </div>
+
     <div class="video-wrap">
         <video id="video" autoplay playsinline></video>
         <canvas id="canvas"></canvas>
     </div>
-    
+
     <div>
         <button id="startBtn">Start</button>
         <button id="stopBtn" style="display:none;">Stop</button>
     </div>
-    
-    <div id="info">Angle: -- | Filter: -- Hz</div>
+
+    <div id="info">Upload tracks and click Start</div>
+
+    <div class="controls-info">
+        <h3>Gesture Controls:</h3>
+        <ul>
+            <li><strong>Right hand swipe left ✋→</strong> Filter frequency (controls Bass, Melody, Pad)</li>
+            <li><strong>Left hand fist 🤛</strong> Mute drums & percussion</li>
+            <li><strong>Right hand fist 🤛 + Both hands swipe left 🎧</strong> DJ Scratch/Backspin effect!</li>
+        </ul>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
