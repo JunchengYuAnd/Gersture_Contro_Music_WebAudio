@@ -2,6 +2,11 @@ let hands, camera, synth, synth2, filter, reverb, delay, isPlaying = false;
 let kick, snare, hihat, drumLoop, drumVolume;
 let isDrumMuted = false;
 
+// For tracking hand velocity
+let prevRightHandPos = null;
+let prevTime = null;
+let currentFilterFreq = 150; // Start at minimum frequency
+
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -58,6 +63,53 @@ function mapToFreq(angle) {
     const norm = angle / 180;
     const logMin = Math.log(200);
     const logMax = Math.log(5000);
+    return Math.round(Math.exp(logMin + norm * (logMax - logMin)));
+}
+
+// Calculate hand velocity (only right-to-left movement)
+function calculateHandVelocity(lm) {
+    const wrist = lm[0];
+    const currentTime = performance.now();
+
+    if (prevRightHandPos === null || prevTime === null) {
+        prevRightHandPos = { x: wrist.x, y: wrist.y };
+        prevTime = currentTime;
+        return 0;
+    }
+
+    // Calculate horizontal movement (X axis only)
+    // Note: video is mirrored, so positive dx in screen = moving left in real world
+    const dx = wrist.x - prevRightHandPos.x;
+
+    // Calculate time delta in seconds
+    const dt = (currentTime - prevTime) / 1000;
+
+    // Update previous values
+    prevRightHandPos = { x: wrist.x, y: wrist.y };
+    prevTime = currentTime;
+
+    // Avoid division by zero
+    if (dt === 0) return 0;
+
+    // Only count right-to-left movement (positive dx due to mirror)
+    // Ignore left-to-right movement
+    if (dx <= 0) return 0;
+
+    // Velocity in normalized units per second
+    const velocity = dx / dt;
+
+    return velocity;
+}
+
+// Map velocity to frequency (logarithmic scale)
+function mapVelocityToFreq(velocity) {
+    // Lower threshold for more sensitivity - now 0 to 0.8 maps to full range
+    const clampedVelocity = Math.min(Math.max(velocity, 0), 0.8);
+    const norm = clampedVelocity / 0.8; // normalize to 0-1
+
+    // Wider frequency range: 150Hz to 8000Hz
+    const logMin = Math.log(150);
+    const logMax = Math.log(8000);
     return Math.round(Math.exp(logMin + norm * (logMax - logMin)));
 }
 
@@ -130,12 +182,22 @@ function onResults(results) {
         }
     }
 
-    // Right hand controls filter
+    // Right hand velocity controls filter
     if (rightHandLm && isPlaying && filter) {
-        const angle = calculateWristAngle(rightHandLm);
-        const freq = mapToFreq(angle);
-        filter.frequency.rampTo(freq, 0.1);
-        info.textContent = `Right Hand - Angle: ${Math.round(angle)}° | Filter: ${freq} Hz`;
+        const velocity = calculateHandVelocity(rightHandLm);
+        const targetFreq = mapVelocityToFreq(velocity);
+
+        // Smooth the frequency change: rise fast, fall fast
+        if (targetFreq > currentFilterFreq) {
+            // Fast attack when moving fast
+            currentFilterFreq = currentFilterFreq + (targetFreq - currentFilterFreq) * 0.5;
+        } else {
+            // Faster decay when slowing down
+            currentFilterFreq = currentFilterFreq + (targetFreq - currentFilterFreq) * 0.25;
+        }
+
+        filter.frequency.rampTo(currentFilterFreq, 0.05);
+        info.textContent = `Speed: ${velocity.toFixed(2)} | Filter: ${Math.round(currentFilterFreq)} Hz`;
     }
 
     // Left hand controls drum mute (fist = mute)
@@ -152,9 +214,7 @@ function onResults(results) {
         // Update info to show drum status
         const drumStatus = isDrumMuted ? '🤛 Drums OFF' : '✋ Drums ON';
         if (rightHandLm) {
-            const angle = calculateWristAngle(rightHandLm);
-            const freq = mapToFreq(angle);
-            info.textContent = `Filter: ${freq} Hz | ${drumStatus}`;
+            info.textContent = `Filter: ${Math.round(currentFilterFreq)} Hz | ${drumStatus}`;
         } else {
             info.textContent = drumStatus;
         }
@@ -206,7 +266,7 @@ startBtn.onclick = async () => {
         type: 'lowpass',
         frequency: 1000,
         rolloff: -24,
-        Q: 2
+        Q: 4
     });
 
     // Reverb for space
@@ -321,6 +381,9 @@ startBtn.onclick = async () => {
 stopBtn.onclick = () => {
     isPlaying = false;
     isDrumMuted = false;
+    prevRightHandPos = null;
+    prevTime = null;
+    currentFilterFreq = 150;
     Tone.Transport.stop();
     if (drumLoop) drumLoop.stop();
     if (video.srcObject) {
