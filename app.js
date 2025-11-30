@@ -1,4 +1,6 @@
 let hands, camera, synth, synth2, filter, reverb, delay, isPlaying = false;
+let kick, snare, hihat, drumLoop, drumVolume;
+let isDrumMuted = false;
 
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
@@ -59,6 +61,29 @@ function mapToFreq(angle) {
     return Math.round(Math.exp(logMin + norm * (logMax - logMin)));
 }
 
+// Detect if hand is making a fist (all fingers curled)
+function isFist(lm) {
+    // Compare fingertip positions to their base knuckle positions
+    // Finger tips: 8(index), 12(middle), 16(ring), 20(pinky)
+    // Finger bases: 5(index), 9(middle), 13(ring), 17(pinky)
+    const tips = [8, 12, 16, 20];
+    const bases = [5, 9, 13, 17];
+
+    let curledCount = 0;
+    for (let i = 0; i < tips.length; i++) {
+        const tipY = lm[tips[i]].y;
+        const baseY = lm[bases[i]].y;
+        // In screen coordinates, larger Y = lower position
+        // When finger is curled, tip is below (greater Y) than base
+        if (tipY > baseY) {
+            curledCount++;
+        }
+    }
+
+    // Consider it a fist if at least 3 fingers are curled
+    return curledCount >= 3;
+}
+
 function drawHand(lm, color) {
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
@@ -113,9 +138,26 @@ function onResults(results) {
         info.textContent = `Right Hand - Angle: ${Math.round(angle)}° | Filter: ${freq} Hz`;
     }
 
-    // Left hand detected but not yet assigned (placeholder for future)
-    if (leftHandLm) {
-        // TODO: Add left hand control here
+    // Left hand controls drum mute (fist = mute)
+    if (leftHandLm && isPlaying && drumVolume) {
+        const fist = isFist(leftHandLm);
+        if (fist && !isDrumMuted) {
+            drumVolume.volume.rampTo(-Infinity, 0.1);
+            isDrumMuted = true;
+        } else if (!fist && isDrumMuted) {
+            drumVolume.volume.rampTo(0, 0.1);
+            isDrumMuted = false;
+        }
+
+        // Update info to show drum status
+        const drumStatus = isDrumMuted ? '🤛 Drums OFF' : '✋ Drums ON';
+        if (rightHandLm) {
+            const angle = calculateWristAngle(rightHandLm);
+            const freq = mapToFreq(angle);
+            info.textContent = `Filter: ${freq} Hz | ${drumStatus}`;
+        } else {
+            info.textContent = drumStatus;
+        }
     }
 
     // Update info when no hands detected
@@ -181,6 +223,61 @@ startBtn.onclick = async () => {
         wet: 0.15
     });
 
+    // Drum volume control (for muting with left hand)
+    drumVolume = new Tone.Volume(0).toDestination();
+
+    // Drum sounds
+    kick = new Tone.MembraneSynth({
+        pitchDecay: 0.05,
+        octaves: 6,
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 0.4 }
+    }).connect(drumVolume);
+    kick.volume.value = -6;
+
+    snare = new Tone.NoiseSynth({
+        noise: { type: 'white' },
+        envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 }
+    }).connect(drumVolume);
+    snare.volume.value = -10;
+
+    hihat = new Tone.MetalSynth({
+        frequency: 200,
+        envelope: { attack: 0.001, decay: 0.1, release: 0.01 },
+        harmonicity: 5.1,
+        modulationIndex: 32,
+        resonance: 4000,
+        octaves: 1.5
+    }).connect(drumVolume);
+    hihat.volume.value = -18;
+
+    // Drum loop pattern
+    drumLoop = new Tone.Part((time, note) => {
+        if (note === 'kick') {
+            kick.triggerAttackRelease('C1', '8n', time);
+        } else if (note === 'snare') {
+            snare.triggerAttackRelease('8n', time);
+        } else if (note === 'hihat') {
+            hihat.triggerAttackRelease('C6', '32n', time);
+        }
+    }, [
+        // Beat pattern: kick on 1 and 3, snare on 2 and 4, hihat on every 8th
+        ['0:0:0', 'kick'],
+        ['0:0:0', 'hihat'],
+        ['0:0:2', 'hihat'],
+        ['0:1:0', 'snare'],
+        ['0:1:0', 'hihat'],
+        ['0:1:2', 'hihat'],
+        ['0:2:0', 'kick'],
+        ['0:2:0', 'hihat'],
+        ['0:2:2', 'hihat'],
+        ['0:3:0', 'snare'],
+        ['0:3:0', 'hihat'],
+        ['0:3:2', 'hihat']
+    ]);
+    drumLoop.loop = true;
+    drumLoop.loopEnd = '1m';
+
     // Audio chain
     const volume = new Tone.Volume(-6);
     synth.chain(filter, delay, reverb, volume, Tone.Destination);
@@ -212,6 +309,7 @@ startBtn.onclick = async () => {
 
     Tone.Transport.start();
     pattern.start(0);
+    drumLoop.start(0);
 
     isPlaying = true;
     await startCamera();
@@ -222,7 +320,9 @@ startBtn.onclick = async () => {
 
 stopBtn.onclick = () => {
     isPlaying = false;
+    isDrumMuted = false;
     Tone.Transport.stop();
+    if (drumLoop) drumLoop.stop();
     if (video.srcObject) {
         video.srcObject.getTracks().forEach(t => t.stop());
         video.srcObject = null;
