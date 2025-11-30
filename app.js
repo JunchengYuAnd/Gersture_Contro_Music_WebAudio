@@ -100,8 +100,8 @@ function setAllPlaybackRate(rate) {
 
 // Detect if hand is making a fist
 function isFist(lm) {
-    const tips = [8, 12, 16, 20];
-    const bases = [5, 9, 13, 17];
+    const tips = [8, 12, 16, 20];  // Index, middle, ring, pinky fingertips
+    const bases = [5, 9, 13, 17];  // Base of each finger
 
     let curledCount = 0;
     for (let i = 0; i < tips.length; i++) {
@@ -110,7 +110,7 @@ function isFist(lm) {
         }
     }
 
-    return curledCount >= 3;
+    return curledCount >= 2;  // Only need 2 fingers curled for easier detection
 }
 
 function drawHand(lm, color) {
@@ -159,17 +159,15 @@ function onResults(results) {
     // Check for DJ scratch mode: right hand fist
     const rightFist = rightHandLm ? isFist(rightHandLm) : false;
 
-    // DJ Reverse: right hand fist + swipe left = reverse with speed control
+    // DJ Reverse: right hand fist + swipe left = reverse
     if (rightFist && rightHandLm && isPlaying) {
         const currentX = rightHandLm[0].x;
 
         if (prevRightHandX !== null) {
-            // Calculate movement (positive = moving left in mirrored view)
             const dx = currentX - prevRightHandX;
-
             if (dx > 0.005) {
                 // Moving left - reverse playback, speed based on movement
-                const speed = Math.min(dx * 80, 5); // Even faster: multiplier 80, max 5x
+                const speed = Math.min(dx * 80, 5);
                 if (!isScratchMode) {
                     setAllReverse(true);
                     isScratchMode = true;
@@ -177,24 +175,26 @@ function onResults(results) {
                 setAllPlaybackRate(speed);
                 info.textContent = `🎧 DJ REVERSE! ⏪ ${speed.toFixed(1)}x`;
             } else {
-                // Not moving left or moving right - pause at current position
+                // Not moving left - normal playback
                 if (isScratchMode) {
                     setAllReverse(false);
+                    setAllPlaybackRate(1);
                     isScratchMode = false;
                 }
-                setAllPlaybackRate(0); // Freeze playback
                 info.textContent = `🤛 Scratch ready (swipe left)`;
             }
+        } else {
+            info.textContent = `🤛 Scratch ready (swipe left)`;
         }
 
         prevRightHandX = currentX;
     } else {
-        // Not in scratch gesture - normal playback
+        // Not in scratch gesture - resume normal playback
         if (isScratchMode) {
             setAllReverse(false);
-            setAllPlaybackRate(1);
             isScratchMode = false;
         }
+        setAllPlaybackRate(1);
         prevRightHandX = null;
 
         // Left hand controls drum mute (only if right hand is not making fist)
@@ -317,6 +317,31 @@ stopBtn.onclick = () => {
     if (percPlayer) { percPlayer.stop(); percPlayer.dispose(); percPlayer = null; }
     if (filter) { filter.dispose(); filter = null; }
     if (drumVolume) { drumVolume.dispose(); drumVolume = null; }
+
+    // Release blob URLs and reset track buffers
+    Object.keys(trackBuffers).forEach(key => {
+        if (trackBuffers[key]) {
+            URL.revokeObjectURL(trackBuffers[key]);
+            trackBuffers[key] = null;
+        }
+    });
+
+    // Reset status indicators
+    drumStatus.classList.remove('loaded');
+    bassStatus.classList.remove('loaded');
+    melodyStatus.classList.remove('loaded');
+    padStatus.classList.remove('loaded');
+    percStatus.classList.remove('loaded');
+
+    // Reset file inputs
+    drumFile.value = '';
+    bassFile.value = '';
+    melodyFile.value = '';
+    padFile.value = '';
+    percFile.value = '';
+
+    // Disable start button
+    startBtn.disabled = true;
 
     if (video.srcObject) {
         video.srcObject.getTracks().forEach(t => t.stop());
