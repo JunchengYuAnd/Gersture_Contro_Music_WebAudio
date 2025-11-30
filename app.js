@@ -169,7 +169,7 @@ function onResults(results) {
 
             if (dx > 0.005) {
                 // Moving left - reverse playback, speed based on movement
-                const speed = Math.min(dx * 30, 2); // Map movement to speed (max 2x)
+                const speed = Math.min(dx * 80, 5); // Even faster: multiplier 80, max 5x
                 if (!isScratchMode) {
                     setAllReverse(true);
                     isScratchMode = true;
@@ -177,12 +177,12 @@ function onResults(results) {
                 setAllPlaybackRate(speed);
                 info.textContent = `🎧 DJ REVERSE! ⏪ ${speed.toFixed(1)}x`;
             } else {
-                // Not moving left or moving right - normal playback
+                // Not moving left or moving right - pause at current position
                 if (isScratchMode) {
                     setAllReverse(false);
-                    setAllPlaybackRate(1);
                     isScratchMode = false;
                 }
+                setAllPlaybackRate(0); // Freeze playback
                 info.textContent = `🤛 Scratch ready (swipe left)`;
             }
         }
