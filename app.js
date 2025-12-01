@@ -4,6 +4,7 @@ let hands, camera, isPlaying = false;
 let drumPlayer, bassPlayer, melodyPlayer, padPlayer, percPlayer;
 let drumVolume, bassVolume, melodyVolume, padVolume, percVolume;
 let melodyFilter; // Low-pass filter for melody
+let bassDistortion; // Distortion for bass
 
 // Track buffers
 const trackBuffers = {
@@ -351,23 +352,16 @@ function onResults(results) {
         } else {
             prevRightHandY = null;
 
-            // Melody filter control: detect if thumb is on left or right side of palm
+            // Melody filter control: detect if thumb is on left or right side of palm (right hand)
             if (rightHandLm && melodyFilter && isPlaying) {
-                // Compare X position of thumb tip (4) vs pinky base (17)
-                // Right hand from camera view (which is "Left" in handedness due to mirror):
-                // Palm facing screen: thumb X < pinky X (thumb on left side)
-                // Back of hand facing screen: thumb X > pinky X (thumb on right side)
                 const thumbX = rightHandLm[4].x;
                 const pinkyBaseX = rightHandLm[17].x;
                 const xDiff = thumbX - pinkyBaseX;
 
-                // xDiff: negative = palm facing, positive = back facing
-                // Map to 0-1 range (roughly -0.15 to +0.15)
                 const rotation = Math.max(0, Math.min(1, (xDiff + 0.15) / 0.3));
 
                 const minFreq = 200;
                 const maxFreq = 20000;
-                // Back facing (thumb right) = high freq, palm facing (thumb left) = low freq
                 const freq = minFreq * Math.pow(maxFreq / minFreq, rotation);
                 melodyFilter.frequency.value = freq;
 
@@ -376,9 +370,28 @@ function onResults(results) {
                 }
             }
 
+            // Bass distortion control: detect if thumb is on left or right side of palm (left hand)
+            if (leftHandLm && bassDistortion && isPlaying && !activeZone) {
+                const thumbX = leftHandLm[4].x;
+                const pinkyBaseX = leftHandLm[17].x;
+                const xDiff = thumbX - pinkyBaseX;
+
+                // Left hand: palm facing = heavy distortion, back facing = clean
+                const rotation = Math.max(0, Math.min(1, (xDiff + 0.15) / 0.3));
+
+                // Distortion ranges from 0 (clean) to 1 (heavy distortion)
+                bassDistortion.distortion = rotation;
+
+                if (!rightHandLm) {
+                    info.textContent = `🎸 Distortion: ${Math.round(rotation * 100)}%`;
+                } else {
+                    info.textContent = `🎹 Filter: ${Math.round(melodyFilter.frequency.value)} Hz | 🎸 Dist: ${Math.round(rotation * 100)}%`;
+                }
+            }
+
             if (!rightHandLm && !leftHandLm && isPlaying) {
                 info.textContent = 'Move left finger to a zone';
-            } else if (isPlaying && leftHandLm && !activeZone && !rightHandLm) {
+            } else if (isPlaying && leftHandLm && !activeZone && !rightHandLm && !bassDistortion) {
                 info.textContent = 'Move left finger to a zone';
             }
         }
@@ -410,8 +423,11 @@ startBtn.onclick = async () => {
     padVolume = new Tone.Volume(-10).toDestination(); // Pad starts at 100%
     percVolume = new Tone.Volume(-60).toDestination();
 
-    // Low-pass filter for melody (controlled by right hand wrist Y position)
+    // Low-pass filter for melody (controlled by right hand palm rotation)
     melodyFilter = new Tone.Filter(20000, "lowpass").connect(melodyVolume);
+
+    // Distortion for bass (controlled by left hand palm rotation)
+    bassDistortion = new Tone.Distortion(0).connect(bassVolume);
 
     // Create players for each track
     if (trackBuffers.drum) {
@@ -425,7 +441,7 @@ startBtn.onclick = async () => {
         bassPlayer = new Tone.Player({
             url: trackBuffers.bass,
             loop: true
-        }).connect(bassVolume);
+        }).connect(bassDistortion); // Connect through distortion
     }
 
     if (trackBuffers.melody) {
@@ -480,6 +496,7 @@ stopBtn.onclick = () => {
     if (padPlayer) { padPlayer.stop(); padPlayer.dispose(); padPlayer = null; }
     if (percPlayer) { percPlayer.stop(); percPlayer.dispose(); percPlayer = null; }
     if (drumVolume) { drumVolume.dispose(); drumVolume = null; }
+    if (bassDistortion) { bassDistortion.dispose(); bassDistortion = null; }
     if (bassVolume) { bassVolume.dispose(); bassVolume = null; }
     if (melodyFilter) { melodyFilter.dispose(); melodyFilter = null; }
     if (melodyVolume) { melodyVolume.dispose(); melodyVolume = null; }
