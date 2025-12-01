@@ -2,8 +2,8 @@ let hands, camera, isPlaying = false;
 
 // Audio players and effects
 let drumPlayer, bassPlayer, melodyPlayer, padPlayer, percPlayer;
-let drumVolume;
-let isDrumMuted = false;
+let drumVolume, bassVolume, melodyVolume, padVolume, percVolume;
+let melodyFilter; // Low-pass filter for melody
 
 // Track buffers
 const trackBuffers = {
@@ -17,6 +17,17 @@ const trackBuffers = {
 // For DJ reverse effect
 let isScratchMode = false;
 let prevRightHandX = null;
+
+// For gesture detection
+let prevRightHandY = null;
+
+// Touch zones - small boxes in a row on the right side (mirrored view shows on top-left)
+const zones = {
+    drum: { x: 0.64, y: 0.05, w: 0.08, h: 0.12, label: '🥁', color: '#ff4444' },
+    bass: { x: 0.73, y: 0.05, w: 0.08, h: 0.12, label: '🎸', color: '#44ff44' },
+    melody: { x: 0.82, y: 0.05, w: 0.08, h: 0.12, label: '🎹', color: '#4444ff' },
+    perc: { x: 0.91, y: 0.05, w: 0.08, h: 0.12, label: '🔔', color: '#ffff44' }
+};
 
 // DOM elements
 const video = document.getElementById('video');
@@ -98,7 +109,7 @@ function setAllPlaybackRate(rate) {
     if (percPlayer) percPlayer.playbackRate = rate;
 }
 
-// Detect if hand is making a fist
+// Detect if hand is making a fist (strict detection)
 function isFist(lm) {
     const tips = [8, 12, 16, 20];  // Index, middle, ring, pinky fingertips
     const bases = [5, 9, 13, 17];  // Base of each finger
@@ -110,7 +121,11 @@ function isFist(lm) {
         }
     }
 
-    return curledCount >= 2;  // Only need 2 fingers curled for easier detection
+    // Also check thumb is curled (thumb tip closer to palm than thumb base)
+    const thumbCurled = lm[4].x > lm[3].x || Math.abs(lm[4].x - lm[2].x) < 0.05;
+
+    // Need all 4 fingers curled AND thumb curled for strict fist detection
+    return curledCount >= 4 && thumbCurled;
 }
 
 function drawHand(lm, color) {
@@ -133,6 +148,85 @@ function drawHand(lm, color) {
     });
 }
 
+// Draw touch zones on canvas
+function drawZones(activeZone) {
+    Object.entries(zones).forEach(([name, zone]) => {
+        const x = zone.x * canvas.width;
+        const y = zone.y * canvas.height;
+        const w = zone.w * canvas.width;
+        const h = zone.h * canvas.height;
+
+        // Get volume percentage for this zone
+        let volumePercent = 0;
+        if (name === 'drum' && drumVolume) {
+            const vol = drumVolume.volume.value;
+            volumePercent = Math.round((Math.max(vol, -60) + 60) / 60 * 100);
+        } else if (name === 'bass' && bassVolume) {
+            const vol = bassVolume.volume.value;
+            volumePercent = Math.round((Math.max(vol, -60) + 60) / 60 * 100);
+        } else if (name === 'melody' && melodyVolume) {
+            const vol = melodyVolume.volume.value;
+            volumePercent = Math.round((Math.max(vol, -60) + 60) / 60 * 100);
+        } else if (name === 'perc' && percVolume) {
+            const vol = percVolume.volume.value;
+            volumePercent = Math.round((Math.max(vol, -60) + 60) / 60 * 100);
+        }
+
+        // Draw zone background - brightness based on volume
+        const alpha = Math.round(0x44 + (0xaa - 0x44) * volumePercent / 100).toString(16).padStart(2, '0');
+        ctx.fillStyle = zone.color + alpha;
+        ctx.fillRect(x, y, w, h);
+
+        // Highlight if left hand is in this zone
+        if (activeZone === name) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(x, y, w, h);
+        } else {
+            ctx.strokeStyle = zone.color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, w, h);
+        }
+
+        // Draw label (flip text so it appears correct in mirrored view)
+        ctx.save();
+        ctx.translate(x + w/2, y + h/2 - 5);
+        ctx.scale(-1, 1); // Flip horizontally
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '24px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(zone.label, 0, 0);
+        ctx.restore();
+
+        // Draw volume percentage (flip text)
+        ctx.save();
+        ctx.translate(x + w/2, y + h - 8);
+        ctx.scale(-1, 1);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${volumePercent}%`, 0, 0);
+        ctx.restore();
+    });
+}
+
+// Check which zone the index fingertip (landmark 8) is in
+function getZone(lm) {
+    // Use index fingertip (landmark 8) instead of wrist (landmark 0)
+    const x = lm[8].x;
+    const y = lm[8].y;
+
+    for (const [name, zone] of Object.entries(zones)) {
+        if (x >= zone.x && x <= zone.x + zone.w &&
+            y >= zone.y && y <= zone.y + zone.h) {
+            return name;
+        }
+    }
+    return null;
+}
+
 function onResults(results) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -148,19 +242,30 @@ function onResults(results) {
 
             if (handedness === 'Left') {
                 rightHandLm = lm;
-                drawHand(lm, '#00ff00');
             } else {
                 leftHandLm = lm;
-                drawHand(lm, '#ff6600');
             }
         }
     }
 
-    // Check for DJ scratch mode: right hand fist
-    const rightFist = rightHandLm ? isFist(rightHandLm) : false;
+    // Check which zone left hand is in
+    const activeZone = leftHandLm ? getZone(leftHandLm) : null;
 
-    // DJ Reverse: right hand fist + swipe left = reverse
-    if (rightFist && rightHandLm && isPlaying) {
+    // Draw zones first (behind hands)
+    if (isPlaying) {
+        drawZones(activeZone);
+    }
+
+    // Draw hands on top
+    if (rightHandLm) drawHand(rightHandLm, '#00ff00');
+    if (leftHandLm) drawHand(leftHandLm, '#ff6600');
+
+    // Check for DJ scratch mode: both hands fist
+    const rightFist = rightHandLm ? isFist(rightHandLm) : false;
+    const leftFist = leftHandLm ? isFist(leftHandLm) : false;
+
+    // DJ Reverse: both hands fist + right hand swipe left = reverse
+    if (rightFist && leftFist && rightHandLm && isPlaying) {
         const currentX = rightHandLm[0].x;
 
         if (prevRightHandX !== null) {
@@ -181,13 +286,14 @@ function onResults(results) {
                     setAllPlaybackRate(1);
                     isScratchMode = false;
                 }
-                info.textContent = `🤛 Scratch ready (swipe left)`;
+                info.textContent = `🤛🤛 Scratch ready (swipe right hand left)`;
             }
         } else {
-            info.textContent = `🤛 Scratch ready (swipe left)`;
+            info.textContent = `🤛🤛 Scratch ready (swipe right hand left)`;
         }
 
         prevRightHandX = currentX;
+        prevRightHandY = null; // Reset swipe tracking when in scratch mode
     } else {
         // Not in scratch gesture - resume normal playback
         if (isScratchMode) {
@@ -197,24 +303,83 @@ function onResults(results) {
         setAllPlaybackRate(1);
         prevRightHandX = null;
 
-        // Left hand controls drum mute (only if right hand is not making fist)
-        if (leftHandLm && isPlaying && drumVolume && !rightFist) {
-            const fist = isFist(leftHandLm);
-            if (fist && !isDrumMuted) {
-                drumVolume.volume.rampTo(-Infinity, 0.1);
-                isDrumMuted = true;
-            } else if (!fist && isDrumMuted) {
-                drumVolume.volume.rampTo(0, 0.1);
-                isDrumMuted = false;
+        // Left hand in zone + right hand up/down to adjust volume
+        if (activeZone && rightHandLm && isPlaying) {
+            const currentY = rightHandLm[0].y;
+
+            if (prevRightHandY !== null) {
+                const dy = currentY - prevRightHandY;
+
+                // Get current volume node
+                let volumeNode = null;
+                let label = '';
+                if (activeZone === 'drum') {
+                    volumeNode = drumVolume;
+                    label = '🥁';
+                } else if (activeZone === 'bass') {
+                    volumeNode = bassVolume;
+                    label = '🎸';
+                } else if (activeZone === 'melody') {
+                    volumeNode = melodyVolume;
+                    label = '🎹';
+                } else if (activeZone === 'perc') {
+                    volumeNode = percVolume;
+                    label = '🔔';
+                }
+
+                if (volumeNode && Math.abs(dy) > 0.005) {
+                    // Get current volume (handle -Infinity)
+                    let currentVol = volumeNode.volume.value;
+                    if (currentVol < -60) currentVol = -60;
+
+                    // Adjust volume: up = increase, down = decrease (larger change)
+                    const volumeChange = -dy * 200; // Invert: moving up (negative dy) increases volume
+                    let newVol = currentVol + volumeChange;
+
+                    // Clamp volume between -60 and 0
+                    newVol = Math.max(-60, Math.min(0, newVol));
+
+                    volumeNode.volume.value = newVol;
+
+                    // Show volume as percentage (0-100)
+                    const volumePercent = Math.round((newVol + 60) / 60 * 100);
+                    info.textContent = `${label} Volume: ${volumePercent}%`;
+                }
             }
 
-            const drumStatusText = isDrumMuted ? '🤛 Drums OFF' : '✋ Drums ON';
-            info.textContent = drumStatusText;
-        }
+            prevRightHandY = currentY;
+        } else {
+            prevRightHandY = null;
 
-        if (!rightHandLm && !leftHandLm) {
-            if (isPlaying) {
-                info.textContent = 'No hands detected';
+            // Melody filter control: detect if thumb is on left or right side of palm
+            if (rightHandLm && melodyFilter && isPlaying) {
+                // Compare X position of thumb tip (4) vs pinky base (17)
+                // Right hand from camera view (which is "Left" in handedness due to mirror):
+                // Palm facing screen: thumb X < pinky X (thumb on left side)
+                // Back of hand facing screen: thumb X > pinky X (thumb on right side)
+                const thumbX = rightHandLm[4].x;
+                const pinkyBaseX = rightHandLm[17].x;
+                const xDiff = thumbX - pinkyBaseX;
+
+                // xDiff: negative = palm facing, positive = back facing
+                // Map to 0-1 range (roughly -0.15 to +0.15)
+                const rotation = Math.max(0, Math.min(1, (xDiff + 0.15) / 0.3));
+
+                const minFreq = 200;
+                const maxFreq = 20000;
+                // Back facing (thumb right) = high freq, palm facing (thumb left) = low freq
+                const freq = minFreq * Math.pow(maxFreq / minFreq, rotation);
+                melodyFilter.frequency.value = freq;
+
+                if (!leftHandLm) {
+                    info.textContent = `🎹 Filter: ${Math.round(freq)} Hz`;
+                }
+            }
+
+            if (!rightHandLm && !leftHandLm && isPlaying) {
+                info.textContent = 'Move left finger to a zone';
+            } else if (isPlaying && leftHandLm && !activeZone && !rightHandLm) {
+                info.textContent = 'Move left finger to a zone';
             }
         }
     }
@@ -238,8 +403,15 @@ async function startCamera() {
 startBtn.onclick = async () => {
     await Tone.start();
 
-    // Volume control for drums/perc
-    drumVolume = new Tone.Volume(0).toDestination();
+    // Volume controls - all start at -60 dB (0%), except Pad at 0 dB (100%)
+    drumVolume = new Tone.Volume(-60).toDestination();
+    bassVolume = new Tone.Volume(-60).toDestination();
+    melodyVolume = new Tone.Volume(-60).toDestination();
+    padVolume = new Tone.Volume(-10).toDestination(); // Pad starts at 100%
+    percVolume = new Tone.Volume(-60).toDestination();
+
+    // Low-pass filter for melody (controlled by right hand wrist Y position)
+    melodyFilter = new Tone.Filter(20000, "lowpass").connect(melodyVolume);
 
     // Create players for each track
     if (trackBuffers.drum) {
@@ -253,28 +425,28 @@ startBtn.onclick = async () => {
         bassPlayer = new Tone.Player({
             url: trackBuffers.bass,
             loop: true
-        }).toDestination();
+        }).connect(bassVolume);
     }
 
     if (trackBuffers.melody) {
         melodyPlayer = new Tone.Player({
             url: trackBuffers.melody,
             loop: true
-        }).toDestination();
+        }).connect(melodyFilter); // Connect through filter instead of directly to volume
     }
 
     if (trackBuffers.pad) {
         padPlayer = new Tone.Player({
             url: trackBuffers.pad,
             loop: true
-        }).toDestination();
+        }).connect(padVolume);
     }
 
     if (trackBuffers.perc) {
         percPlayer = new Tone.Player({
             url: trackBuffers.perc,
             loop: true
-        }).connect(drumVolume);
+        }).connect(percVolume);
     }
 
     // Wait for all players to load
@@ -297,9 +469,9 @@ startBtn.onclick = async () => {
 
 stopBtn.onclick = () => {
     isPlaying = false;
-    isDrumMuted = false;
     isScratchMode = false;
     prevRightHandX = null;
+    prevRightHandY = null;
 
     // Stop all players
     if (drumPlayer) { drumPlayer.stop(); drumPlayer.dispose(); drumPlayer = null; }
@@ -308,6 +480,11 @@ stopBtn.onclick = () => {
     if (padPlayer) { padPlayer.stop(); padPlayer.dispose(); padPlayer = null; }
     if (percPlayer) { percPlayer.stop(); percPlayer.dispose(); percPlayer = null; }
     if (drumVolume) { drumVolume.dispose(); drumVolume = null; }
+    if (bassVolume) { bassVolume.dispose(); bassVolume = null; }
+    if (melodyFilter) { melodyFilter.dispose(); melodyFilter = null; }
+    if (melodyVolume) { melodyVolume.dispose(); melodyVolume = null; }
+    if (padVolume) { padVolume.dispose(); padVolume = null; }
+    if (percVolume) { percVolume.dispose(); percVolume = null; }
 
     // Release blob URLs and reset track buffers
     Object.keys(trackBuffers).forEach(key => {
