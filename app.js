@@ -2,7 +2,7 @@ let hands, camera, isPlaying = false;
 
 // Audio players and effects
 let drumPlayer, bassPlayer, melodyPlayer, padPlayer, percPlayer;
-let filter, drumVolume;
+let drumVolume;
 let isDrumMuted = false;
 
 // Track buffers
@@ -238,15 +238,7 @@ async function startCamera() {
 startBtn.onclick = async () => {
     await Tone.start();
 
-    // Filter for bass, melody, pad
-    filter = new Tone.Filter({
-        type: 'lowpass',
-        frequency: 1000,
-        rolloff: -24,
-        Q: 4
-    }).toDestination();
-
-    // Separate volume for drums
+    // Volume control for drums/perc
     drumVolume = new Tone.Volume(0).toDestination();
 
     // Create players for each track
@@ -261,21 +253,21 @@ startBtn.onclick = async () => {
         bassPlayer = new Tone.Player({
             url: trackBuffers.bass,
             loop: true
-        }).toDestination(); // Filter disabled, direct output
+        }).toDestination();
     }
 
     if (trackBuffers.melody) {
         melodyPlayer = new Tone.Player({
             url: trackBuffers.melody,
             loop: true
-        }).toDestination(); // Filter disabled, direct output
+        }).toDestination();
     }
 
     if (trackBuffers.pad) {
         padPlayer = new Tone.Player({
             url: trackBuffers.pad,
             loop: true
-        }).toDestination(); // Filter disabled, direct output
+        }).toDestination();
     }
 
     if (trackBuffers.perc) {
@@ -315,7 +307,6 @@ stopBtn.onclick = () => {
     if (melodyPlayer) { melodyPlayer.stop(); melodyPlayer.dispose(); melodyPlayer = null; }
     if (padPlayer) { padPlayer.stop(); padPlayer.dispose(); padPlayer = null; }
     if (percPlayer) { percPlayer.stop(); percPlayer.dispose(); percPlayer = null; }
-    if (filter) { filter.dispose(); filter = null; }
     if (drumVolume) { drumVolume.dispose(); drumVolume = null; }
 
     // Release blob URLs and reset track buffers
