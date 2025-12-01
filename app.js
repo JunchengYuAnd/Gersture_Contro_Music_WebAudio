@@ -5,6 +5,7 @@ let drumPlayer, bassPlayer, melodyPlayer, padPlayer, percPlayer;
 let drumVolume, bassVolume, melodyVolume, padVolume, percVolume;
 let melodyFilter; // Low-pass filter for melody
 let bassDistortion; // Distortion for bass
+let globalHighpass; // Global high-pass filter for build-up effect
 
 // Track buffers
 const trackBuffers = {
@@ -265,9 +266,20 @@ function onResults(results) {
     const rightFist = rightHandLm ? isFist(rightHandLm) : false;
     const leftFist = leftHandLm ? isFist(leftHandLm) : false;
 
-    // DJ Reverse: both hands fist + right hand swipe left = reverse
+    // DJ Reverse & Global Highpass: both hands fist
     if (rightFist && leftFist && rightHandLm && isPlaying) {
         const currentX = rightHandLm[0].x;
+        const currentY = rightHandLm[0].y;
+
+        // Global highpass control: use Y position of right hand
+        if (globalHighpass) {
+            // Y = 0 (top) -> high frequency (5000 Hz, aggressive build-up)
+            // Y = 1 (bottom) -> low frequency (20 Hz, full bass)
+            const minFreq = 20;
+            const maxFreq = 20000;
+            const freq = minFreq * Math.pow(maxFreq / minFreq, 1 - currentY);
+            globalHighpass.frequency.value = freq;
+        }
 
         if (prevRightHandX !== null) {
             const dx = currentX - prevRightHandX;
@@ -279,7 +291,7 @@ function onResults(results) {
                     isScratchMode = true;
                 }
                 setAllPlaybackRate(speed);
-                info.textContent = `🎧 DJ REVERSE! ⏪ ${speed.toFixed(1)}x`;
+                info.textContent = `🎧 DJ REVERSE! ⏪ ${speed.toFixed(1)}x | HP: ${Math.round(globalHighpass.frequency.value)} Hz`;
             } else {
                 // Not moving left - normal playback
                 if (isScratchMode) {
@@ -287,15 +299,19 @@ function onResults(results) {
                     setAllPlaybackRate(1);
                     isScratchMode = false;
                 }
-                info.textContent = `🤛🤛 Scratch ready (swipe right hand left)`;
+                info.textContent = `🤛🤛 Build-up! HP: ${Math.round(globalHighpass.frequency.value)} Hz`;
             }
         } else {
-            info.textContent = `🤛🤛 Scratch ready (swipe right hand left)`;
+            info.textContent = `🤛🤛 Build-up! HP: ${Math.round(globalHighpass.frequency.value)} Hz`;
         }
 
         prevRightHandX = currentX;
         prevRightHandY = null; // Reset swipe tracking when in scratch mode
     } else {
+        // Reset highpass when not in fist mode
+        if (globalHighpass) {
+            globalHighpass.frequency.value = 20; // Reset to full bass
+        }
         // Not in scratch gesture - resume normal playback
         if (isScratchMode) {
             setAllReverse(false);
@@ -416,12 +432,15 @@ async function startCamera() {
 startBtn.onclick = async () => {
     await Tone.start();
 
-    // Volume controls - all start at -60 dB (0%), except Pad at 0 dB (100%)
-    drumVolume = new Tone.Volume(-60).toDestination();
-    bassVolume = new Tone.Volume(-60).toDestination();
-    melodyVolume = new Tone.Volume(-60).toDestination();
-    padVolume = new Tone.Volume(-10).toDestination(); // Pad starts at 100%
-    percVolume = new Tone.Volume(-60).toDestination();
+    // Global high-pass filter (controlled by both fists + up/down)
+    globalHighpass = new Tone.Filter(20, "highpass").toDestination();
+
+    // Volume controls - all connect to global highpass instead of destination
+    drumVolume = new Tone.Volume(-60).connect(globalHighpass);
+    bassVolume = new Tone.Volume(-60).connect(globalHighpass);
+    melodyVolume = new Tone.Volume(-60).connect(globalHighpass);
+    padVolume = new Tone.Volume(-10).connect(globalHighpass); // Pad starts at 100%
+    percVolume = new Tone.Volume(-60).connect(globalHighpass);
 
     // Low-pass filter for melody (controlled by right hand palm rotation)
     melodyFilter = new Tone.Filter(20000, "lowpass").connect(melodyVolume);
@@ -502,6 +521,7 @@ stopBtn.onclick = () => {
     if (melodyVolume) { melodyVolume.dispose(); melodyVolume = null; }
     if (padVolume) { padVolume.dispose(); padVolume = null; }
     if (percVolume) { percVolume.dispose(); percVolume = null; }
+    if (globalHighpass) { globalHighpass.dispose(); globalHighpass = null; }
 
     // Release blob URLs and reset track buffers
     Object.keys(trackBuffers).forEach(key => {
